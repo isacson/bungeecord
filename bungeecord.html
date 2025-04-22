@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <title>When will I be done with my to-do list</title>
+    <style>
+				@media (max-width: 500px) {
+						.modal {
+								width: 100%;
+								left: 0;
+								top: 0;
+								transform: none;
+								height: 100vh; /* Full height for better usability */
+								display: flex;
+								flex-direction: column;
+								justify-content: center;
+								align-items: center;
+						}
+				}
+				.modal {
+						display: none;
+						position: fixed;
+						top: 50%;
+						left: 50%;
+						transform: translate(-50%, -50%);
+						background-color: white;
+						padding: 20px;
+						box-shadow: 0px 0px 10px rgba(0,0,0,0.3);
+						border-radius: 8px;
+						z-index: 1000;
+						width: 30em; /* Default width for larger screens */
+						max-width: 100%; /* Prevents overflow on small screens */
+				}
+				.modal input {
+						font-size: 16px; /* Prevent iOS from zooming */
+				}
+        body { font-family: "Avenir Next", Helvetica, Arial, sans-serif; width: 30em; margin: auto; max-width: 100%; }
+				textarea { font-family: "Avenir Next", Helvetica, Arial, sans-serif; }
+        #taskList { list-style: none; padding: 0; }
+        .task { display: flex; align-items: center; justify-content: space-between; padding: 5px; border-bottom: 1px solid #ccc; transition: background 0.2s; }
+        .task-controls { display: flex; align-items: center; gap: 5px; }
+        .task input[type="checkbox"] { transform: scale(1.5); }
+        .task .delete-task { margin-left: 5px; margin-right: 5px; cursor: pointer; color: red; font-size: 1.2em; }
+        .task .delete-task:hover { background-color: darkred; }
+				.task.completed {
+						text-decoration: line-through;
+						color: #999;
+						opacity: 0.4;
+				}
+        .task-time { text-align: right; }
+        .drag-handle { font-size: 1.5em; margin-left: 1em; cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+        .task-name { border: none; background-color: transparent; font-size: inherit; }
+        .task-name:focus { outline: none; border-bottom: 1px solid black; }
+        #totalTime { margin-top: 10px; font-weight: bold; }
+        #finishAt { margin-top: 10px; font-size: 120%; font-weight: bold; color: red; }
+        .drag-over { background-color: #f0f0f0; }
+        .dark-mode {
+						background-color: #181818;
+						color: #e0e0e0;
+				}
+				.dark-mode input, .dark-mode button, .dark-mode textarea {
+						background-color: #2c2c2c;
+						color: #ffffff;
+						border: 1px solid #555;
+				}
+				.dark-mode .task {
+						background-color: #222;
+						border-bottom: 1px solid #444;
+				}
+				.dark-mode .task-time {
+						color: #b0b0b0;
+				}
+				.dark-mode .task.completed {
+						text-decoration: line-through;
+						color: #777;
+						opacity: 0.6;
+				}
+				.dark-mode .delete-task {
+						color: #ff6b6b;
+				}
+				.dark-mode .delete-task:hover {
+						color: #ff3b3b;
+				}
+				.dark-mode .drag-handle {
+						color: #ccc;
+				}
+				.dark-mode .modal {
+						background-color: #222;
+						color: #e0e0e0;
+						border: 1px solid #444;
+				}
+				.task-duration {
+						margin-left: 5px; width: 3.5em; text-align: center; 
+						font-weight: bold;
+						color: white;
+						transition: background 0.3s ease-in-out;
+				}
+    </style>
+</head>
+<body>
+    <h2>When will I be done with my to-do list?</h2>
+    <label for="startTime">Start Time: </label>
+    <input type="time" id="startTime" onchange="manualStartTime = true; updateTasks()">
+    <ul id="taskList"></ul>
+    <button onclick="addTask()" style=" border: 2px solid black; padding: 0.25em; border-radius: 0.5em;"><span style="color:red; font-size: 120%; font-weight: bold;">Add Task (or press &#x2318;-1 or Ctrl-1)</span></button>
+    <button onclick="clearTasks()">Clear All Tasks</button>
+    <p id="totalTime"></p>
+    <p id="finishAt"></p>
+    <p style="font-size: 80%;"><button onclick="exportTasks()" style="font-size: 80%;">Export these tasks</button><br>
+    Import a .json file that you exported elsewhere<br><input type="file" id="importFile" accept=".json" onchange="importTasks(event)" style="font-size: 80%;"></p>
+    <p align="right"><button id="darkModeToggle">Toggle Dark Mode</button></p>
+    
+    <script>
+        let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
+        let manualStartTime = false;
+        let draggedTaskIndex = null;
+
+        document.addEventListener("DOMContentLoaded", () => {
+            setCurrentStartTime();
+            updateTasks();
+        });
+								
+	document.getElementById("darkModeToggle").addEventListener("click", function () {
+						document.body.classList.toggle("dark-mode");
+						localStorage.setItem("darkMode", document.body.classList.contains("dark-mode"));
+				});
+				
+				// Check saved mode on page load
+				if (localStorage.getItem("darkMode") === "true") {
+						document.body.classList.add("dark-mode");
+				}
+
+        function setCurrentStartTime() {
+            if (!manualStartTime) {
+                const now = new Date();
+                const localTime = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+                document.getElementById("startTime").value = localTime;
+            }
+        }
+
+        document.addEventListener("keydown", (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "1") {
+                addTask();
+                e.preventDefault();
+            }
+        });
+
+				function addTask() {
+						document.getElementById("taskModal").style.display = "block"; // Show modal
+						document.getElementById("modalTaskName").focus(); // Automatically focus input field
+
+						// Prevent iOS zooming by modifying the viewport
+						let viewport = document.querySelector("meta[name=viewport]");
+						viewport.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1");
+
+				}	
+							
+				function closeTaskModal() {
+						document.getElementById("taskModal").style.display = "none";
+						
+						// Reset zoom on mobile after closing the modal
+						document.body.style.zoom = "1.0";
+						document.documentElement.style.zoom = "1.0";
+						// Restore default zoom behavior after closing the modal
+						let viewport = document.querySelector("meta[name=viewport]");
+						viewport.setAttribute("content", "width=device-width, initial-scale=1");
+
+				}
+				
+				function confirmAddTask() {
+						const taskName = document.getElementById("modalTaskName").value.trim();
+						const hours = parseInt(document.getElementById("modalTaskHours").value, 10) || 0;
+						const minutes = parseInt(document.getElementById("modalTaskMinutes").value, 10) || 0;
+						const taskTime = hours * 60 + minutes;
+				
+						if (!taskName || taskTime <= 0) {
+								alert("Please enter a valid task name and duration.");
+								return;
+						}
+				
+						tasks.push({ name: taskName, time: taskTime, completed: false });
+						saveTasks();
+						updateTasks();
+						closeTaskModal(); // Close the modal after adding
+				}
+
+        function clearTasks() {
+            if (confirm("Are you sure you want to clear all tasks?")) {
+                tasks = [];
+                saveTasks();
+                updateTasks();
+            }
+        }
+
+        function deleteTask(index) {
+            tasks.splice(index, 1);
+            saveTasks();
+            updateTasks();
+        }
+
+        function exportTasks() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(tasks));
+            const downloadAnchor = document.createElement("a");
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", "tasks.json");
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            document.body.removeChild(downloadAnchor);
+        }
+
+				function importTasks(event) {
+						const file = event.target.files[0];
+						if (!file) return;
+				
+						const reader = new FileReader();
+				
+						reader.onload = function(e) {
+								try {
+										const importedTasks = JSON.parse(e.target.result);
+										
+										// Ensure imported data is valid
+										if (Array.isArray(importedTasks)) {
+												tasks = importedTasks;
+												saveTasks();
+												updateTasks();
+										} else {
+												throw new Error("Invalid file format");
+										}
+								} catch (error) {
+										alert("Error: Invalid JSON file. Please upload a valid task list.");
+								}
+				
+								// Clear the file input field so the same file can be reselected if needed
+								event.target.value = "";
+						};
+				
+						reader.readAsText(file);
+				}
+				
+				document.addEventListener("touchmove", function (e) {
+						if (draggedTaskIndex !== null) {
+								e.preventDefault(); // Only prevent scrolling when dragging
+								let touchY = e.touches[0].clientY;
+								let swapTarget = document.elementFromPoint(e.touches[0].clientX, touchY)?.closest(".task");
+				
+								if (swapTarget && swapTarget !== draggedElement) {
+										let taskList = draggedElement.parentNode;
+										let targetIndex = [...taskList.children].indexOf(swapTarget);
+				
+										if (targetIndex > draggedTaskIndex) {
+												taskList.insertBefore(draggedElement, swapTarget.nextSibling);
+										} else {
+												taskList.insertBefore(draggedElement, swapTarget);
+										}
+				
+										draggedTaskIndex = targetIndex; // Update index tracking
+								}
+						}
+				}, { passive: false });
+				
+				document.addEventListener("touchstart", function (e) {
+						// ✅ Allow dragging ONLY if touching the ↕️ handle
+						if (e.target.classList.contains("drag-handle")) {
+								e.preventDefault(); // Prevents scrolling while dragging
+								draggedTaskIndex = [...document.getElementById("taskList").children].indexOf(e.target.closest(".task"));
+								draggedElement = e.target.closest(".task");
+				
+								if (draggedElement) {
+										draggedElement.classList.add("dragging");
+										console.log("TOUCHSTART: Drag started on task", draggedElement.textContent);
+								}
+						} else {
+								// ✅ If the user touches anywhere else, reset dragging
+								draggedTaskIndex = null;
+								draggedElement = null;
+						}
+				}, { passive: false });
+
+				document.addEventListener("touchend", function () {
+						if (draggedElement) {
+								// Update tasks array order
+								let taskList = [...document.getElementById("taskList").children];
+								tasks = taskList.map(li => {
+										let name = li.querySelector(".task-name").value;
+										let time = parseInt(li.querySelector(".task-duration").value, 10);
+										let completed = li.querySelector("input[type='checkbox']").checked;
+										return { name, time, completed };
+								});
+				
+								saveTasks();  // Save the new order
+								updateTasks();  // Re-render tasks with the new order
+						}
+				
+						draggedElement = null;
+				});
+						            
+
+        function updateTasks() {
+            setCurrentStartTime();
+            const list = document.getElementById("taskList");
+            list.innerHTML = "";
+            
+            let totalTime = 0;
+            let startTimeInput = document.getElementById("startTime").value;
+            let [hours, minutes] = startTimeInput.split(":" ).map(Number);
+            
+						let draggedElement = null;
+						let draggedIndex = null;
+												
+            tasks.forEach((task, index) => {
+                if (!task.completed) totalTime += task.time;
+                minutes += task.completed ? 0 : task.time;
+                hours += Math.floor(minutes / 60);
+                minutes %= 60;
+                
+								const li = document.createElement("li");
+								li.className = `task ${task.completed ? 'completed' : ''}`;
+								li.dataset.index = index;                
+
+								// Task Controls (Checkbox & Delete Button)
+								const taskControls = document.createElement("div");
+								taskControls.className = "task-controls";
+								
+								const checkbox = document.createElement("input");
+								checkbox.type = "checkbox";
+								checkbox.checked = task.completed;
+								checkbox.addEventListener("change", function () {
+										task.completed = checkbox.checked;
+										li.classList.toggle("completed", task.completed);
+										saveTasks();
+										updateTasks();
+								});
+								
+								const deleteButton = document.createElement("span");
+								deleteButton.className = "delete-task";
+								deleteButton.textContent = "\u274C";
+								deleteButton.addEventListener("click", function () {
+										deleteTask(index);
+								});
+								                             
+								// Task Name Input
+								const taskNameInput = document.createElement("textarea");
+								taskNameInput.type = "text";
+								taskNameInput.className = "task-name";
+								taskNameInput.value = task.name;
+								taskNameInput.addEventListener("blur", function () {
+										task.name = taskNameInput.value;
+										saveTasks();
+										updateTasks();
+								});
+                
+								// Task Duration
+								const durationInput = document.createElement("input");
+								durationInput.type = "number";
+								durationInput.value = task.time;
+								durationInput.className = "task-duration";
+								durationInput.addEventListener("change", function () {
+										task.time = parseInt(durationInput.value, 10) || 0;
+										saveTasks();
+										updateTasks();
+								});
+ 
+								const dragHandle = document.createElement("span");
+								dragHandle.className = "drag-handle";
+								dragHandle.textContent = "\u2195️";
+								dragHandle.draggable = true;
+			                                            
+								// Drag Handle Event Listeners
+
+								dragHandle.addEventListener("dragstart", function (e) {
+										draggedTaskIndex = index;
+										e.target.classList.add("drag-over");
+								});
+								
+								dragHandle.addEventListener("dragover", function (e) {
+										e.preventDefault();
+										e.target.closest(".task").classList.add("drag-over"); // Ensure we add to the right element
+								});
+								
+								dragHandle.addEventListener("dragleave", function () {
+										li.classList.remove("drag-over");
+								});
+								
+								dragHandle.addEventListener("drop", function (e) {
+										e.preventDefault();
+										if (draggedTaskIndex !== null) {
+												const taskList = document.getElementById("taskList").children;
+												let targetIndex = [...taskList].indexOf(e.target.closest(".task"));
+								
+												if (targetIndex !== -1 && targetIndex !== draggedTaskIndex) {
+														const movedTask = tasks.splice(draggedTaskIndex, 1)[0];
+														tasks.splice(targetIndex, 0, movedTask);
+														saveTasks();
+														updateTasks();
+												}
+										}
+								
+										document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
+								
+										setTimeout(() => { draggedTaskIndex = null; }, 100); 
+								});
+
+								// Task Completion Time Display
+								const formattedTime = new Date();
+								formattedTime.setHours(hours, minutes);
+								const timeSpan = document.createElement("span");
+								timeSpan.className = "task-time";
+								timeSpan.textContent = "Done by " + formattedTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+							  taskControls.appendChild(checkbox);
+								taskControls.appendChild(deleteButton);
+								li.appendChild(taskControls);
+								li.appendChild(taskNameInput);
+								li.appendChild(durationInput);
+								li.appendChild(dragHandle);
+								li.appendChild(timeSpan);
+								list.appendChild(li);
+		            });
+            
+            const finishTime = new Date();
+            finishTime.setHours(hours, minutes);
+						let hoursDisplay = Math.floor(totalTime / 60);
+						let minutesDisplay = totalTime % 60;
+						let timeString = hoursDisplay > 0 
+								? `${hoursDisplay} hour${hoursDisplay !== 1 ? 's' : ''} ${minutesDisplay} minute${minutesDisplay !== 1 ? 's' : ''}` 
+								: `${minutesDisplay} minute${minutesDisplay !== 1 ? 's' : ''}`;
+						
+						document.getElementById("totalTime").textContent = `Total time: ${timeString}`;            document.getElementById("finishAt").textContent = `Finish at: ${finishTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+				
+				updateTaskDurationColors();
+        }
+
+        function saveTasks() {
+            localStorage.setItem("tasks", JSON.stringify(tasks));
+        }
+        
+				document.addEventListener("keydown", function (event) {
+						const modal = document.getElementById("taskModal");
+						
+						if (modal.style.display === "block") {
+								if (event.key === "Escape") {
+										closeTaskModal();
+								} else if (event.key === "Enter") {
+										event.preventDefault(); // Prevents unintended behavior (like form submission in some browsers)
+										confirmAddTask(); // Submits the task
+								}
+						}
+				});
+				function updateTaskDurationColors() {
+						document.querySelectorAll(".task-duration").forEach(input => {
+								let value = parseInt(input.value, 10) || 0;
+				
+								if (value <= 39) {
+										input.style.backgroundColor = "darkseagreen"; 
+								} else if (value <= 79) {
+										input.style.backgroundColor = "orange";
+								} else {
+										input.style.backgroundColor = "lightcoral";
+								}
+						});
+				}
+    </script>
+
+		<div id="taskModal" class="modal">
+				<div class="modal-content">
+						<h3>Add a Task</h3>
+						<label>Task Name: <input type="text" id="modalTaskName" onfocus="this.select()"></label><br>
+						<label>Hours: <input type="number" id="modalTaskHours" min="0" value="0" onfocus="this.select()"></label><br>
+						<label>Minutes: <input type="number" id="modalTaskMinutes" min="0" value="0" onfocus="this.select()"></label><br>
+						<button onclick="confirmAddTask()">Add Task</button>
+						<button onclick="closeTaskModal()">Cancel</button>
+				</div>
+		</div>
+		
+		<style>
+				.modal {
+						display: none;
+						position: fixed;
+						top: 50%;
+						left: 50%;
+						transform: translate(-50%, -50%);
+						background-color: white;
+						padding: 20px;
+						box-shadow: 0px 0px 10px rgba(0,0,0,0.3);
+						border-radius: 8px;
+						z-index: 1000;
+				}
+				.modal-content { text-align: center; }
+				.modal input { margin: 5px; width: 100px; }
+		</style>
+</body>
+</html>
