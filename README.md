@@ -4,19 +4,20 @@ Estimates how long it will take you to finish a list of tasks, and fits them aro
 
 You give it your to-do list and how long each thing should take. It tells you when each one will be done and when you'll finish for the day. Meetings stay put at their times. Your other tasks fit into the gaps, and you can see how much free time you have left.
 
-Everything happens in one web page. There's nothing to install and no account to create, and your list stays on your own computer.
+Everything happens in one web page. There's nothing to install and no account to create, and your list stays on your own computer or phone.
+
+### 👉 Open it here: **https://isacson.github.io/bungeecord/bungeecord.html**
 
 ---
 
 ## Getting started
 
-1. Go to **https://github.com/isacson/bungeecord/blob/main/bungeecord.html**
-2. Near the top right of the page, click the **Download raw file** button (a small arrow pointing down into a tray).
-3. Find the downloaded file, **bungeecord.html**, in your Downloads folder. Move it somewhere easy to find, like your Desktop or Documents folder.
-4. **Double-click** it. It opens in your web browser (Chrome, Safari, Edge or Firefox).
-5. Bookmark the page so you can come back to it easily.
+1. Click the link above, **https://isacson.github.io/bungeecord/bungeecord.html**. It opens in your web browser. It works on a computer or a phone.
+2. **Bookmark it** so you can come back easily. On a phone, you can also add it to your home screen:
+   - **iPhone (Safari):** tap the Share button (a square with an arrow pointing up), then **Add to Home Screen**.
+   - **Android (Chrome):** tap the **⋮** menu, then **Add to Home screen**.
 
-> Your list is saved inside your web browser on this computer. If you close the page and come back later, using the same browser on the same computer, your list will still be there.
+> Your list is saved inside your web browser on this device. Nothing is sent to the website. If you close the page and come back later, using the same browser on the same device, your list will still be there.
 
 ---
 
@@ -85,15 +86,15 @@ Pinned items have a **blue stripe** on the left and a 📌 pin. They show their 
 
 ---
 
-## Moving your list to another computer or browser
+## Moving your list to another computer, phone or browser
 
-Your list lives in one browser on one computer. To take it somewhere else:
+Your list lives in one browser on one device. To take it somewhere else:
 
 1. Click **Export these tasks** at the bottom of the page. This saves a file called **tasks.json** to your Downloads folder.
-2. Get that file to the other computer, for example by emailing it to yourself.
-3. On the other computer, open bungeecord.html and click **Choose File** under "Import a .json file…". Then pick tasks.json.
+2. Get that file to the other device, for example by emailing it to yourself.
+3. On the other device, open **https://isacson.github.io/bungeecord/bungeecord.html** and click **Choose File** under "Import a .json file…". Then pick tasks.json.
 
-Importing **replaces** the list that's already on that computer. It doesn't add to it.
+Importing **replaces** the list that's already on that device. It doesn't add to it.
 
 Exporting is also a handy way to keep a backup, or to save a "typical day" list you can reload whenever you like.
 
@@ -102,10 +103,13 @@ Exporting is also a handy way to keep a backup, or to save a "typical day" list 
 ## Questions
 
 **Does this send my information anywhere?**
-No. The page works entirely on your own computer. Your tasks aren't uploaded or shared with anyone.
+No. The page is loaded from the internet, but it then runs entirely on your own device. Your tasks are never uploaded or shared with anyone.
 
 **My list disappeared!**
-Make sure you're using the same browser on the same computer as before. Your list may also be lost if you clear your browser's history or "site data," or if you use a private or incognito window. Exporting your list now and then protects you against this.
+Make sure you're using the same browser on the same device as before, and the same link: **https://isacson.github.io/bungeecord/bungeecord.html**. Your list may also be lost if you clear your browser's history or "site data," or if you use a private or incognito window. Exporting your list now and then protects you against this.
 
 **A pasted meeting got the wrong time.**
 A time from 1:00 to 6:59 without "am" or "pm" is read as afternoon. Write `8am` or `8:00 AM` to be sure. You can also fix any time afterward by clicking it on the meeting's row.
+
+**Can I use it without an internet connection?**
+Yes, once you've downloaded it. Go to https://github.com/isacson/bungeecord/blob/main/bungeecord.html, click the **Download raw file** button near the top right (a small arrow pointing down into a tray), and double-click the downloaded file to open it. Note that a downloaded copy keeps its own separate list. Use Export and Import (above) to move your tasks between the two.
