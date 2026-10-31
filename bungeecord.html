@@ -93,19 +93,30 @@
 						border: 1px solid #444;
 				}
 				.task-duration {
-						margin-left: 5px; width: 3.5em; text-align: center; 
+						margin-left: 5px; width: 3.5em; text-align: center;
 						font-weight: bold;
 						color: white;
 						transition: background 0.3s ease-in-out;
 				}
+				.task.fixed { border-left: 4px solid steelblue; background-color: #eef4fa; }
+				.task.fixed .task-duration { background-color: steelblue; }
+				.dark-mode .task.fixed { background-color: #1d2a36; }
+				.pin { cursor: pointer; margin-left: 0.5em; opacity: 0.3; }
+				.pin:hover, .task.fixed .pin { opacity: 1; }
+				.task-at { width: 6.5em; font-size: 0.9em; }
+				.task-note { display: block; font-size: 80%; color: #888; }
+				.task-note.conflict { color: #c00; font-weight: bold; }
+				.gap { padding: 5px; text-align: center; font-size: 90%; font-style: italic; color: #888; border-bottom: 1px dashed #ccc; }
     </style>
 </head>
 <body>
     <h2>When will I be done with my to-do list?</h2>
     <label for="startTime">Start Time: </label>
     <input type="time" id="startTime" onchange="manualStartTime = true; updateTasks()">
+    <button onclick="manualStartTime = false; updateTasks()" title="Follow the current time again">Now</button>
     <ul id="taskList"></ul>
     <button onclick="addTask()" style=" border: 2px solid black; padding: 0.25em; border-radius: 0.5em;"><span style="color:red; font-size: 120%; font-weight: bold;">Add Task (or press &#x2318;-1 or Ctrl-1)</span></button>
+    <button onclick="openPasteModal()" title="Turn lines like &quot;10:00 Standup 30&quot; into pinned items">Paste meetings</button>
     <button onclick="clearTasks()">Clear All Tasks</button>
     <p id="totalTime"></p>
     <p id="finishAt"></p>
@@ -117,11 +128,20 @@
         let tasks = JSON.parse(localStorage.getItem("tasks")) || [];
         let manualStartTime = false;
         let draggedTaskIndex = null;
+        let draggedElement = null;
 
         document.addEventListener("DOMContentLoaded", () => {
             setCurrentStartTime();
             updateTasks();
         });
+
+        // Keep times current as the clock moves, unless the user is editing a row or dragging
+        setInterval(() => {
+            if (!manualStartTime && draggedElement === null &&
+                !document.getElementById("taskList").contains(document.activeElement)) {
+                updateTasks();
+            }
+        }, 30000);
 								
 	document.getElementById("darkModeToggle").addEventListener("click", function () {
 						document.body.classList.toggle("dark-mode");
@@ -175,16 +195,139 @@
 						const hours = parseInt(document.getElementById("modalTaskHours").value, 10) || 0;
 						const minutes = parseInt(document.getElementById("modalTaskMinutes").value, 10) || 0;
 						const taskTime = hours * 60 + minutes;
-				
+						const atInput = document.getElementById("modalTaskAt");
+
 						if (!taskName || taskTime <= 0) {
 								alert("Please enter a valid task name and duration.");
 								return;
 						}
-				
-						tasks.push({ name: taskName, time: taskTime, completed: false });
+
+						const newTask = { name: taskName, time: taskTime, completed: false };
+						if (atInput.value) newTask.at = atInput.value;
+						atInput.value = "";
+						tasks.push(newTask);
 						saveTasks();
 						updateTasks();
 						closeTaskModal(); // Close the modal after adding
+				}
+
+				// --- Paste meetings: turn lines like "10:00 Standup 30" or "2–3pm Dentist" into pinned items ---
+				const TIME_RE = String.raw`(\d{1,2})(?:[:.](\d{2}))?(?:\s*([ap])\.?m?\.?)?(?![a-z\d])`;
+				const RANGE_RE = new RegExp(TIME_RE + String.raw`\s*(?:-|–|—|to|until)\s*` + TIME_RE, "gi");
+				const SINGLE_RE = new RegExp(TIME_RE, "gi");
+
+				// Minutes after midnight, or null. A bare 1:00–6:59 means the afternoon.
+				function clockFrom(h, m, suffix) {
+						h = Number(h);
+						m = Number(m || 0);
+						if (h > 23 || m > 59) return null;
+						if (suffix) {
+								if (h === 0 || h > 12) return null;
+								h = h % 12 + (suffix.toLowerCase() === "p" ? 12 : 0);
+						} else if (h >= 1 && h <= 6) {
+								h += 12;
+						}
+						return h * 60 + m;
+				}
+
+				function parseRange(r) {
+						const s1 = r[3] && r[3].toLowerCase(), s2 = r[6] && r[6].toLowerCase();
+						let start = clockFrom(r[1], r[2], s1 || s2);
+						const end = clockFrom(r[4], r[5], s2 || s1);
+						// "11–12pm" means 11am to noon
+						if (!s1 && s2 && start !== null && start >= end) start = clockFrom(r[1], r[2], s2 === "p" ? "a" : "p");
+						if (start === null || end === null || end <= start) return null;
+						return { start, minutes: end - start };
+				}
+
+				function parseDuration(text) {
+						let m = text.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\b(?:\s*(\d+)\s*(?:m|min|mins|minutes?)?\b)?/i);
+						if (m) return { minutes: Math.round(parseFloat(m[1]) * 60) + (Number(m[2]) || 0), text: m[0] };
+						m = text.match(/(\d+)\s*(?:m|min|mins|minutes?)\b/i);
+						if (m) return { minutes: Number(m[1]), text: m[0] };
+						m = text.match(/(?:^|\s)(\d+)\s*$/);
+						if (m && Number(m[1]) >= 5 && Number(m[1]) <= 600) return { minutes: Number(m[1]), text: m[0] };
+						return null;
+				}
+
+				function parseMeetingLine(line) {
+						let start = null, minutes = null, rest = line;
+						for (const r of line.matchAll(RANGE_RE)) {
+								const range = parseRange(r);
+								if (range) { ({ start, minutes } = range); rest = line.replace(r[0], " "); break; }
+						}
+						if (start === null) {
+								// A lone time needs a colon or am/pm, so "Q3" or "1:1" aren't mistaken for times
+								for (const t of line.matchAll(SINGLE_RE)) {
+										if (!t[2] && !t[3]) continue;
+										start = clockFrom(t[1], t[2], t[3]);
+										if (start !== null) { rest = line.replace(t[0], " "); break; }
+								}
+						}
+						if (start === null) return null;
+						if (minutes === null) {
+								const d = parseDuration(rest);
+								minutes = d ? d.minutes : 30;
+								if (d) rest = rest.replace(d.text, " ");
+						}
+						if (minutes <= 0) return null;
+						const name = rest.replace(/\s+/g, " ").replace(/^[\s\-–—:|,·•*()]+|[\s\-–—:|,·•*()]+$/g, "") || "Meeting";
+						return { name, at: toHHMM(start), time: minutes };
+				}
+
+				function parsePastedMeetings() {
+						const lines = document.getElementById("pasteText").value.split("\n").map(l => l.trim()).filter(Boolean);
+						const items = [], skipped = [];
+						lines.forEach(line => {
+								const item = parseMeetingLine(line);
+								if (item) items.push(item); else skipped.push(line);
+						});
+						return { items, skipped };
+				}
+
+				function updatePastePreview() {
+						const { items, skipped } = parsePastedMeetings();
+						const preview = document.getElementById("pastePreview");
+						preview.innerHTML = "";
+						items.forEach(item => {
+								const li = document.createElement("li");
+								const start = toMinutes(item.at);
+								li.textContent = `📌 ${formatClock(start)}–${formatClock(start + item.time)}  ${item.name}`;
+								preview.appendChild(li);
+						});
+						skipped.forEach(line => {
+								const li = document.createElement("li");
+								li.className = "skipped";
+								li.textContent = `No time found, skipping: ${line}`;
+								preview.appendChild(li);
+						});
+						const button = document.getElementById("pasteConfirm");
+						button.disabled = items.length === 0;
+						button.textContent = items.length ? `Add ${items.length} pinned item${items.length !== 1 ? "s" : ""}` : "Add";
+				}
+
+				function openPasteModal() {
+						document.getElementById("pasteModal").style.display = "block";
+						document.getElementById("pasteText").focus();
+						updatePastePreview();
+				}
+
+				function closePasteModal() {
+						document.getElementById("pasteModal").style.display = "none";
+				}
+
+				function confirmPasteMeetings() {
+						const { items } = parsePastedMeetings();
+						items.forEach(item => {
+								// Skip anything already on the list, so pasting the same agenda twice is harmless
+								if (!tasks.some(t => t.at === item.at && t.name === item.name)) {
+										tasks.push({ name: item.name, time: item.time, completed: false, at: item.at });
+								}
+						});
+						saveTasks();
+						updateTasks();
+						document.getElementById("pasteText").value = "";
+						closePasteModal();
 				}
 
         function clearTasks() {
@@ -281,156 +424,304 @@
 
 				document.addEventListener("touchend", function () {
 						if (draggedElement) {
-								// Update tasks array order
-								let taskList = [...document.getElementById("taskList").children];
-								tasks = taskList.map(li => {
-										let name = li.querySelector(".task-name").value;
-										let time = parseInt(li.querySelector(".task-duration").value, 10);
-										let completed = li.querySelector("input[type='checkbox']").checked;
-										return { name, time, completed };
-								});
-				
-								saveTasks();  // Save the new order
-								updateTasks();  // Re-render tasks with the new order
+								const dragged = draggedElement;
+								draggedElement = null;
+								commitListOrder(dragged);
 						}
-				
 						draggedElement = null;
 				});
+
+				// Rebuild the tasks array from the on-screen order (after a drag). A task dropped
+				// below a pinned item waits for that item to end instead of pausing for it.
+				function commitListOrder(dragged) {
+						if (dragged) {
+								const task = tasks[dragged.dataset.index];
+								let above = dragged.previousElementSibling;
+								while (above && !(above.classList.contains("fixed") && !above.classList.contains("completed"))) {
+										above = above.previousElementSibling;
+								}
+								if (above) {
+										const anchor = tasks[above.dataset.index];
+										anchor.id = anchor.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+										task.waitsFor = anchor.id;
+								} else {
+										delete task.waitsFor;
+								}
+						}
+						tasks = [...document.querySelectorAll("#taskList .task")].map(li => tasks[li.dataset.index]);
+						saveTasks();
+						updateTasks();
+				}
+
+				function toMinutes(hhmm) {
+						const [h, m] = hhmm.split(":").map(Number);
+						return h * 60 + m;
+				}
+
+				function toHHMM(totalMinutes) {
+						const m = ((totalMinutes % 1440) + 1440) % 1440;
+						return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+				}
+
+				function formatClock(totalMinutes) {
+						const d = new Date();
+						d.setHours(0, totalMinutes, 0, 0);
+						return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+				}
+
+				function formatDuration(total) {
+						const h = Math.floor(total / 60), m = total % 60;
+						return h > 0
+								? `${h} hour${h !== 1 ? 's' : ''} ${m} minute${m !== 1 ? 's' : ''}`
+								: `${m} minute${m !== 1 ? 's' : ''}`;
+				}
+
+				// Work out when everything happens. Fixed-time items ("at") sit at their clock time;
+				// flexible tasks run in list order through the free time between them, pausing for
+				// any fixed item they run into and finishing afterward.
+				function schedule(startMin) {
+						const plan = new Map();
+						const busy = tasks
+								.filter(t => t.at && !t.completed)
+								.map(t => ({ task: t, s: toMinutes(t.at), e: toMinutes(t.at) + t.time }))
+								.sort((a, b) => a.s - b.s);
+
+						busy.forEach((b, i) => {
+								const clash = busy.find((o, j) => j !== i && o.s < b.e && b.s < o.e);
+								plan.set(b.task, { start: b.s, end: b.e, overlaps: clash ? clash.task.name : null });
+						});
+
+						let cursor = startMin;
+						tasks.forEach(t => {
+								if (t.at) {
+										if (t.completed) plan.set(t, { start: toMinutes(t.at), end: toMinutes(t.at) + t.time });
+										return;
+								}
+								if (t.completed) { plan.set(t, {}); return; }
+
+								const anchor = t.waitsFor && busy.find(b => b.task.id === t.waitsFor);
+								if (anchor) cursor = Math.max(cursor, anchor.e);
+
+								let remaining = t.time, start = null;
+								const pausedFor = [];
+								while (true) {
+										if (start !== null && remaining <= 0) break;
+										const block = busy.find(b => b.s <= cursor && b.e > cursor);
+										if (block) {
+												if (start !== null) pausedFor.push(block.task.name);
+												cursor = block.e;
+												continue;
+										}
+										if (start === null) start = cursor;
+										if (remaining <= 0) break;
+										const next = busy.find(b => b.s > cursor);
+										const step = next ? Math.min(remaining, next.s - cursor) : remaining;
+										cursor += step;
+										remaining -= step;
+								}
+								plan.set(t, { start, end: cursor, pausedFor });
+						});
+
+						const fixedEnd = Math.max(startMin, ...busy.map(b => b.e));
+						return { plan, finish: Math.max(cursor, fixedEnd) };
+				}
 						            
 
         function updateTasks() {
             setCurrentStartTime();
             const list = document.getElementById("taskList");
             list.innerHTML = "";
-            
-            let totalTime = 0;
-            let startTimeInput = document.getElementById("startTime").value;
-            let [hours, minutes] = startTimeInput.split(":" ).map(Number);
-            
-						let draggedElement = null;
-						let draggedIndex = null;
-												
-            tasks.forEach((task, index) => {
-                if (!task.completed) totalTime += task.time;
-                minutes += task.completed ? 0 : task.time;
-                hours += Math.floor(minutes / 60);
-                minutes %= 60;
-                
-								const li = document.createElement("li");
-								li.className = `task ${task.completed ? 'completed' : ''}`;
-								li.dataset.index = index;                
 
-								// Task Controls (Checkbox & Delete Button)
-								const taskControls = document.createElement("div");
-								taskControls.className = "task-controls";
-								
-								const checkbox = document.createElement("input");
-								checkbox.type = "checkbox";
-								checkbox.checked = task.completed;
-								checkbox.addEventListener("change", function () {
-										task.completed = checkbox.checked;
-										li.classList.toggle("completed", task.completed);
-										saveTasks();
-										updateTasks();
-								});
-								
-								const deleteButton = document.createElement("span");
-								deleteButton.className = "delete-task";
-								deleteButton.textContent = "\u274C";
-								deleteButton.addEventListener("click", function () {
-										deleteTask(index);
-								});
-								                             
-								// Task Name Input
-								const taskNameInput = document.createElement("textarea");
-								taskNameInput.type = "text";
-								taskNameInput.className = "task-name";
-								taskNameInput.value = task.name;
-								taskNameInput.addEventListener("blur", function () {
-										task.name = taskNameInput.value;
-										saveTasks();
-										updateTasks();
-								});
-                
-								// Task Duration
-								const durationInput = document.createElement("input");
-								durationInput.type = "number";
-								durationInput.value = task.time;
-								durationInput.className = "task-duration";
-								durationInput.addEventListener("change", function () {
-										task.time = parseInt(durationInput.value, 10) || 0;
-										saveTasks();
-										updateTasks();
-								});
- 
-								const dragHandle = document.createElement("span");
-								dragHandle.className = "drag-handle";
-								dragHandle.textContent = "\u2195️";
-								dragHandle.draggable = true;
-			                                            
-								// Drag Handle Event Listeners
+            const startMin = toMinutes(document.getElementById("startTime").value);
+            const { plan, finish } = schedule(startMin);
 
-								dragHandle.addEventListener("dragstart", function (e) {
-										draggedTaskIndex = index;
-										e.target.classList.add("drag-over");
-								});
-								
-								dragHandle.addEventListener("dragover", function (e) {
-										e.preventDefault();
-										e.target.closest(".task").classList.add("drag-over"); // Ensure we add to the right element
-								});
-								
-								dragHandle.addEventListener("dragleave", function () {
-										li.classList.remove("drag-over");
-								});
-								
-								dragHandle.addEventListener("drop", function (e) {
-										e.preventDefault();
-										if (draggedTaskIndex !== null) {
-												const taskList = document.getElementById("taskList").children;
-												let targetIndex = [...taskList].indexOf(e.target.closest(".task"));
-								
-												if (targetIndex !== -1 && targetIndex !== draggedTaskIndex) {
-														const movedTask = tasks.splice(draggedTaskIndex, 1)[0];
-														tasks.splice(targetIndex, 0, movedTask);
-														saveTasks();
-														updateTasks();
-												}
-										}
-								
-										document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
-								
-										setTimeout(() => { draggedTaskIndex = null; }, 100); 
-								});
+            // Fixed-time items are slotted in by clock time; flexible tasks keep their list order
+            const pendingFixed = tasks.filter(t => t.at).sort((a, b) => toMinutes(a.at) - toMinutes(b.at));
+            let lastEnd = startMin;
+            const emitFixedUpTo = (limit) => {
+                while (pendingFixed.length && toMinutes(pendingFixed[0].at) <= limit) {
+                    const t = pendingFixed.shift();
+                    const p = plan.get(t);
+                    if (!t.completed && p.start > lastEnd) list.appendChild(renderGap(p.start - lastEnd));
+                    list.appendChild(renderTask(t, p, startMin));
+                    if (!t.completed) lastEnd = Math.max(lastEnd, p.end);
+                }
+            };
 
-								// Task Completion Time Display
-								const formattedTime = new Date();
-								formattedTime.setHours(hours, minutes);
-								const timeSpan = document.createElement("span");
-								timeSpan.className = "task-time";
-								timeSpan.textContent = "Done by " + formattedTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+            tasks.forEach(t => {
+                if (t.at) return;
+                const p = plan.get(t);
+                if (!t.completed) emitFixedUpTo(p.start);
+                list.appendChild(renderTask(t, p, startMin));
+                if (!t.completed) lastEnd = Math.max(lastEnd, p.end);
+            });
+            emitFixedUpTo(Infinity);
 
-							  taskControls.appendChild(checkbox);
-								taskControls.appendChild(deleteButton);
-								li.appendChild(taskControls);
-								li.appendChild(taskNameInput);
-								li.appendChild(durationInput);
-								li.appendChild(dragHandle);
-								li.appendChild(timeSpan);
-								list.appendChild(li);
-		            });
-            
-            const finishTime = new Date();
-            finishTime.setHours(hours, minutes);
-						let hoursDisplay = Math.floor(totalTime / 60);
-						let minutesDisplay = totalTime % 60;
-						let timeString = hoursDisplay > 0 
-								? `${hoursDisplay} hour${hoursDisplay !== 1 ? 's' : ''} ${minutesDisplay} minute${minutesDisplay !== 1 ? 's' : ''}` 
-								: `${minutesDisplay} minute${minutesDisplay !== 1 ? 's' : ''}`;
-						
-						document.getElementById("totalTime").textContent = `Total time: ${timeString}`;            document.getElementById("finishAt").textContent = `Finish at: ${finishTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
-				
-				updateTaskDurationColors();
+            const flexTotal = tasks.filter(t => !t.at && !t.completed).reduce((sum, t) => sum + t.time, 0);
+            const fixedTotal = tasks.filter(t => t.at && !t.completed && toMinutes(t.at) + t.time > startMin)
+                .reduce((sum, t) => sum + t.time, 0);
+            document.getElementById("totalTime").textContent = `Total time: ${formatDuration(flexTotal)}` +
+                (fixedTotal ? ` (plus ${formatDuration(fixedTotal)} of fixed-time items)` : "");
+            document.getElementById("finishAt").textContent = `Finish at: ${formatClock(finish)}`;
+
+            updateTaskDurationColors();
+        }
+
+        function renderGap(minutes) {
+            const li = document.createElement("li");
+            li.className = "gap";
+            li.textContent = `${formatDuration(minutes)} free`;
+            return li;
+        }
+
+        function renderTask(task, p, startMin) {
+            const list = document.getElementById("taskList");
+            const index = tasks.indexOf(task);
+
+            const li = document.createElement("li");
+            li.className = `task ${task.completed ? 'completed' : ''} ${task.at ? 'fixed' : ''}`;
+            li.dataset.index = index;
+
+            // Task Controls (Checkbox & Delete Button)
+            const taskControls = document.createElement("div");
+            taskControls.className = "task-controls";
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = task.completed;
+            checkbox.addEventListener("change", function () {
+                task.completed = checkbox.checked;
+                saveTasks();
+                updateTasks();
+            });
+
+            const deleteButton = document.createElement("span");
+            deleteButton.className = "delete-task";
+            deleteButton.textContent = "❌";
+            deleteButton.addEventListener("click", function () {
+                deleteTask(index);
+            });
+
+            // Task Name Input
+            const taskNameInput = document.createElement("textarea");
+            taskNameInput.className = "task-name";
+            taskNameInput.value = task.name;
+            taskNameInput.addEventListener("blur", function () {
+                task.name = taskNameInput.value;
+                saveTasks();
+                updateTasks();
+            });
+
+            // Task Duration
+            const durationInput = document.createElement("input");
+            durationInput.type = "number";
+            durationInput.value = task.time;
+            durationInput.className = "task-duration";
+            durationInput.addEventListener("change", function () {
+                task.time = parseInt(durationInput.value, 10) || 0;
+                saveTasks();
+                updateTasks();
+            });
+
+            // Pin: fixes a task at a clock time (or unpins it)
+            const pin = document.createElement("span");
+            pin.className = "pin";
+            pin.textContent = "📌";
+            pin.title = task.at ? "Unpin (let this float with the other tasks)" : "Pin to a fixed start time";
+            pin.addEventListener("click", function () {
+                if (task.at) {
+                    delete task.at;
+                } else {
+                    const proposed = p.start !== undefined ? Math.round(p.start / 5) * 5 : startMin;
+                    task.at = toHHMM(proposed);
+                }
+                saveTasks();
+                updateTasks();
+            });
+
+            taskControls.appendChild(checkbox);
+            taskControls.appendChild(deleteButton);
+            li.appendChild(taskControls);
+            li.appendChild(taskNameInput);
+            li.appendChild(durationInput);
+
+            const timeSpan = document.createElement("span");
+            timeSpan.className = "task-time";
+
+            if (task.at) {
+                // Fixed-time item: editable start time instead of a drag handle
+                const atInput = document.createElement("input");
+                atInput.type = "time";
+                atInput.className = "task-at";
+                atInput.value = task.at;
+                atInput.addEventListener("change", function () {
+                    if (!atInput.value) return;
+                    task.at = atInput.value;
+                    saveTasks();
+                    updateTasks();
+                });
+                li.appendChild(atInput);
+                li.appendChild(pin);
+                timeSpan.textContent = `${formatClock(p.start)}–${formatClock(p.end)}`;
+                if (p.overlaps && !task.completed) {
+                    const note = document.createElement("span");
+                    note.className = "task-note conflict";
+                    note.textContent = `⚠️ overlaps ${p.overlaps}`;
+                    timeSpan.appendChild(note);
+                }
+            } else {
+                const dragHandle = document.createElement("span");
+                dragHandle.className = "drag-handle";
+                dragHandle.textContent = "↕️";
+                dragHandle.draggable = true;
+                dragHandle.addEventListener("dragstart", function (e) {
+                    draggedElement = li;
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", "");
+                });
+                dragHandle.addEventListener("dragend", function () {
+                    draggedElement = null;
+                    document.querySelectorAll(".drag-over").forEach(el => el.classList.remove("drag-over"));
+                });
+                li.appendChild(dragHandle);
+                li.appendChild(pin);
+
+                if (task.completed) {
+                    timeSpan.textContent = "Done";
+                } else {
+                    timeSpan.textContent = "Done by " + formatClock(p.end);
+                    if (p.pausedFor.length) {
+                        const note = document.createElement("span");
+                        note.className = "task-note";
+                        note.textContent = `⏸️ paused for ${p.pausedFor.join(", ")}`;
+                        timeSpan.appendChild(note);
+                    }
+                }
+            }
+            li.appendChild(timeSpan);
+
+            // Any row is a drop target; only flexible tasks can be dragged
+            li.addEventListener("dragover", function (e) {
+                if (!draggedElement) return;
+                e.preventDefault();
+                li.classList.add("drag-over");
+            });
+            li.addEventListener("dragleave", function () {
+                li.classList.remove("drag-over");
+            });
+            li.addEventListener("drop", function (e) {
+                e.preventDefault();
+                const dragged = draggedElement;
+                draggedElement = null;
+                if (dragged && dragged !== li) {
+                    const rows = [...list.children];
+                    if (rows.indexOf(li) > rows.indexOf(dragged)) li.after(dragged);
+                    else li.before(dragged);
+                    commitListOrder(dragged);
+                }
+            });
+
+            return li;
         }
 
         function saveTasks() {
@@ -438,6 +729,11 @@
         }
         
 				document.addEventListener("keydown", function (event) {
+						if (document.getElementById("pasteModal").style.display === "block") {
+								if (event.key === "Escape") closePasteModal();
+								else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) confirmPasteMeetings();
+								return;
+						}
 						const modal = document.getElementById("taskModal");
 						
 						if (modal.style.display === "block") {
@@ -450,7 +746,7 @@
 						}
 				});
 				function updateTaskDurationColors() {
-						document.querySelectorAll(".task-duration").forEach(input => {
+						document.querySelectorAll(".task:not(.fixed) .task-duration").forEach(input => {
 								let value = parseInt(input.value, 10) || 0;
 				
 								if (value <= 39) {
@@ -470,11 +766,25 @@
 						<label>Task Name: <input type="text" id="modalTaskName" onfocus="this.select()"></label><br>
 						<label>Hours: <input type="number" id="modalTaskHours" min="0" value="0" onfocus="this.select()"></label><br>
 						<label>Minutes: <input type="number" id="modalTaskMinutes" min="0" value="0" onfocus="this.select()"></label><br>
+						<label>Fixed start time (optional, e.g. a meeting): <input type="time" id="modalTaskAt"></label><br>
 						<button onclick="confirmAddTask()">Add Task</button>
 						<button onclick="closeTaskModal()">Cancel</button>
 				</div>
 		</div>
-		
+
+		<div id="pasteModal" class="modal">
+				<div class="modal-content">
+						<h3>Paste meetings</h3>
+						<p class="paste-help">One per line. Each becomes a pinned item. Formats like these work:<br>
+						<code>10:00 Standup 30</code> · <code>2–3pm Dentist</code> · <code>14:30–15:15 Design review</code> · <code>11am Call with Jo 1h</code><br>
+						No length given means 30 minutes. A time from 1:00 to 6:59 with no am/pm is read as afternoon.</p>
+						<textarea id="pasteText" rows="7" oninput="updatePastePreview()" placeholder="9:30 Standup 15&#10;12–1pm Lunch&#10;3:00 Pick up kids 20"></textarea>
+						<ul id="pastePreview"></ul>
+						<button id="pasteConfirm" onclick="confirmPasteMeetings()">Add</button>
+						<button onclick="closePasteModal()">Cancel</button>
+				</div>
+		</div>
+
 		<style>
 				.modal {
 						display: none;
@@ -489,6 +799,11 @@
 						z-index: 1000;
 				}
 				.modal-content { text-align: center; }
+				#pasteModal .modal-content { text-align: left; }
+				#pasteText { width: 100%; box-sizing: border-box; font-size: 16px; }
+				.paste-help { font-size: 85%; color: #666; }
+				#pastePreview { list-style: none; padding: 0; font-size: 90%; }
+				#pastePreview .skipped { color: #999; font-style: italic; }
 				.modal input { margin: 5px; width: 100px; }
 		</style>
 </body>
